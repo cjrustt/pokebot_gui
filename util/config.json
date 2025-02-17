@@ -1,0 +1,15 @@
+{
+    "timezone": "UTC",
+    "cvv_code": "",
+    "auto_complete": false,
+    "refresh_time": 5,
+    "max_quantity": 1,
+    "saved_products": [
+    ],
+    "selenium_options": {
+        "user-data-dir": "",
+        "profile-directory": "Default",
+        "headless": false,
+        "detach": false
+    }
+}
