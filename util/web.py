@@ -6,7 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait, Select
-from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException
+from selenium.common.exceptions import StaleElementReferenceException, NoSuchElementException, TimeoutException
 
 
 def init_driver(selenium_options):
@@ -41,52 +41,63 @@ def main(program_data, comm):
     prod_id = selected_prod['id']
 
     selenium_options = program_data['selenium_options']
+
     driver = init_driver(selenium_options)
+    comm.driver = driver
+
+    order_complete = False
 
     try:
-        # Tries adding item to cart, refreshes page based on provided refresh_time if not available
-        added_to_cart = try_adding_to_cart(driver, comm, prod_url, prod_id, refresh_time)
+        while comm.running and not order_complete:
 
-        # If the user requests more than 1 item, navigates to the 'cart' page and updates quantity
-        quantity_set = update_quantity(driver, comm, req_quant)
+            comm.external_log.emit('Trying to add to cart')
+            adding_to_cart_result = try_adding_to_cart(driver, comm, prod_url, refresh_time)
+            comm.external_log.emit(f"Add to cart result: {adding_to_cart_result}")
 
-        # Placed order on final checkout screen. May auto-complete if user has previously verified CVV
-        order_placed = place_order(driver, comm, cvv_code, auto_complete)
+            comm.external_log.emit('Trying to update quantity')
+            update_quantity_result = update_quantity(driver, comm, req_quant)
+            comm.external_log.emit(f"Update Quantity result: {update_quantity_result}")
 
-        if added_to_cart and quantity_set and order_placed:
-            comm.external_log.emit('Order complete. Closing driver')
+            comm.external_log.emit('Trying to place order')
+            place_order_result = place_order(driver, comm, cvv_code, auto_complete)
+            comm.external_log.emit(f"Place Order result: {place_order_result}")
+
+            comm.external_log.emit('Order completed. web.main exiting')
+            if adding_to_cart_result and update_quantity_result and place_order_result:
+                order_complete = True
 
     finally:
-        # Ensure driver is properly closed when script ends
         if driver:
+            comm.external_log.emit('Web.main closing driver and exiting')
             driver.quit()
-            comm.external_log.emit("Driver closed")
+            comm.driver = None
 
 
-def try_adding_to_cart(driver, comm, prod_url, prod_id: str, refresh_time: int) -> bool:
-    button_id = f'addToCartButtonOrTextIdFor{prod_id}'
+def try_adding_to_cart(driver, comm, prod_url, refresh_time: int) -> bool:
     refresh_count = 0
 
     driver.get(prod_url)
     comm.external_log.emit('URL Loaded')
     while True:
+        time.sleep(0.5)
         try:
             # Locates the 'Add to Cart' button
             add_to_cart_button = WebDriverWait(driver, 10).until(
                 ec.presence_of_element_located(
-                    (By.ID, button_id)
+                    (By.XPATH, '//button[text()="Add to cart"]')
                 )
             )
             if add_to_cart_button.get_attribute('disabled'):
                 # Product is out of stock
                 if refresh_count < 1:
-                    comm.external_log.emit(f"Item out of stock. \
-                        Initiating refresh every {refresh_time} seconds")
-                    refresh_count += 1
-                    time.sleep(refresh_time)
-                    driver.refresh()
-                    comm.counter_update.emit(i)  # Updates GUI refresh counter
-                    continue
+                    comm.external_log.emit(f"Item out of stock. Initiating refresh every {refresh_time} seconds")
+
+                refresh_count += 1
+                time.sleep(refresh_time)
+                driver.refresh()
+                comm.counter_update.emit(refresh_count)  # Updates GUI refresh counter
+                continue
+
             else:
                 # Adds item to cart
                 add_to_cart_button.click()
@@ -102,9 +113,16 @@ def try_adding_to_cart(driver, comm, prod_url, prod_id: str, refresh_time: int) 
             comm.external_log.emit("Attempting to locate 'Add to Cart' button...")
             time.sleep(1)
             continue
+        except TimeoutException:
+            comm.external_log.emit("Add to Cart Button Timeout. Refreshing...")
+            driver.refresh()
+            time.sleep(2)
+            continue
 
 
 def update_quantity(driver, comm, req_quant: str) -> bool:
+    if req_quant == '1':
+        return True
     driver.get('https://www.target.com/cart')
     int_quantity = int(req_quant)
     while True:
@@ -141,6 +159,11 @@ def update_quantity(driver, comm, req_quant: str) -> bool:
             comm.external_log.emit("Attempting to locate 'Quantity Selector'...")
             time.sleep(1)
             continue
+        except TimeoutException:
+            comm.external_log.emit("Quantity Selector Timeout. Refreshing...")
+            driver.refresh()
+            time.sleep(2)
+            continue
 
 
 def place_order(driver, comm, cvv_code: str, auto_complete: bool):
@@ -156,27 +179,41 @@ def place_order(driver, comm, cvv_code: str, auto_complete: bool):
                     (By.CSS_SELECTOR, 'button[data-test="placeOrderButton"]')
                 )
             )
+            if place_order_button.get_attribute('disabled'):
+                # Save and Continue needs to be pressed
+                save_and_continue_button = WebDriverWait(driver, 10).until(
+                    ec.presence_of_element_located(
+                        (By.XPATH, '//button[text()="Save and continue]')
+                    )
+                )
+                if save_and_continue_button.get_attribute('disabled'):
+                    pass
+                else:
+                    save_and_continue_button.click()
             place_order_button.click()
             comm.external_log.emit("'Place Order' button clicked")
-
-            # Enters CVV code into field
-            cvv_input = WebDriverWait(driver, 10).until(
-                ec.presence_of_element_located(
-                    (By.ID, 'enter-cvv')
+            try:
+                # Enters CVV code into field
+                cvv_input = WebDriverWait(driver, 10).until(
+                    ec.presence_of_element_located(
+                        (By.ID, 'enter-cvv')
+                    )
                 )
-            )
-            cvv_input.send_keys(cvv_code)
-            comm.external_log.emit("CVV Code Entered")
+                cvv_input.send_keys(cvv_code)
+                comm.external_log.emit("CVV Code Entered")
 
-            # Locates confirm button and clicks
-            confirm_button = WebDriverWait(driver, 10).until(
-                ec.presence_of_element_located(
-                    (By.CSS_SELECTOR, 'button[data-test="confirm-button"]')
+                # Locates confirm button and clicks
+                confirm_button = WebDriverWait(driver, 10).until(
+                    ec.presence_of_element_located(
+                        (By.CSS_SELECTOR, 'button[data-test="confirm-button"]')
+                    )
                 )
-            )
-            confirm_button.click()
-            comm.external_log.emit("Order placed successfully!")
-            return True
+                confirm_button.click()
+                comm.external_log.emit("Order placed successfully!")
+                return True
+            except TimeoutException:
+                comm.external_log.emit('Cannot locate CVV field or confirm button. Assuming order placed')
+                return True
 
         except StaleElementReferenceException:
             comm.external_log.emit("Reloading elements...")
@@ -185,4 +222,9 @@ def place_order(driver, comm, cvv_code: str, auto_complete: bool):
         except NoSuchElementException:
             comm.external_log.emit("Attempting to locate elements...")
             time.sleep(1)
+            continue
+        except TimeoutException:
+            comm.external_log.emit("Place Order Button Timeout. Refreshing...")
+            driver.refresh()
+            time.sleep(2)
             continue

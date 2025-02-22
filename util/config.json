@@ -1,15 +1,39 @@
 {
-    "timezone": "UTC",
-    "cvv_code": "",
-    "auto_complete": false,
-    "refresh_time": 5,
-    "max_quantity": 1,
+    "timezone": "America/Los_Angeles",
+    "cvv_code": "806",
+    "auto_complete": true,
+    "refresh_time": 4,
+    "max_quantity": "3",
     "saved_products": [
+        {
+            "name": "Pok\u00e9mon Trading Card Game: Scarlet & Violet\u2014prismatic Evolutions Elite Trainer Box",
+            "url": "https://www.target.com/p/2024-pok-scarlet-violet-s8-5-elite-trainer-box/-/A-93954435",
+            "id": "93954435",
+            "image_file_path": "images/93954435.jpg"
+        },
+        {
+            "name": "Pokemon Trading Card Game: Sword & Shield - Lost Origin Elite Trainer Box",
+            "url": "https://www.target.com/p/pokemon-trading-card-game-sword-38-shield-lost-origin-elite-trainer-box/-/A-87154260",
+            "id": "87154260",
+            "image_file_path": "images/87154260.jpg"
+        },
+        {
+            "name": "Pokemon Trading Card Game: Crown Zenith Elite Trainer Box",
+            "url": "https://www.target.com/p/pokemon-trading-card-game-crown-zenith-elite-trainer-box/-/A-87077756",
+            "id": "87077756",
+            "image_file_path": "images/87077756.jpg"
+        },
+        {
+            "name": "Pok\u00e9mon Trading Card Game: Sword & Shield Fusion Strike Elite Trainer Box",
+            "url": "https://www.target.com/p/pok-233-mon-trading-card-game-sword-38-shield-fusion-strike-elite-trainer-box/-/A-84600446",
+            "id": "84600446",
+            "image_file_path": "images/84600446.jpg"
+        }
     ],
     "selenium_options": {
-        "user-data-dir": "",
+        "user-data-dir": "~/.config.google-chrome/",
         "profile-directory": "Default",
         "headless": false,
-        "detach": false
+        "detach": true
     }
 }
