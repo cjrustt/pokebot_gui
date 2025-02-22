@@ -16,6 +16,12 @@ class Communicator(QObject):
     # Communicator object allowing for external data to be ported into GUI
     external_log = Signal(str)
     counter_update = Signal(int)
+    timeout_error = Signal(bool)
+
+    def __init__(self):
+        super().__init__()
+        self.running = False
+        self.driver = None
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +33,7 @@ class MainWindow(QMainWindow):
         self.comm = Communicator()
         self.comm.external_log.connect(self.external_log)
         self.comm.counter_update.connect(self.update_counter)
+        self.comm.timeout_error.connect(self.activate_timeout_error)
 
         # Connect fields to functions
         self.ui.product_display_list.itemClicked.connect(lambda: self.update_url_button_display('remove'))
@@ -45,13 +52,16 @@ class MainWindow(QMainWindow):
         self.ui.cvv_button.clicked.connect(self.update_cvv)
         self.ui.reset_defaults_button.clicked.connect(self.reset_config)
         self.ui.save_settings_button.clicked.connect(self.save_config)
-        self.ui.start_stop_button.clicked.connect(self.request_start)
+        self.ui.start_button.clicked.connect(self.request_start)
+        self.ui.stop_button.clicked.connect(self.stop_button_functions)
 
         # Instance variables
         self.current_config = read_config()
         self.page_refresh_count = 0
         self.selected_product = None
         self.ready_to_run = False
+        self.thread = None
+        self.is_timeout_error = False
 
         # Set instance default values
         self.update_url_button_display('add')  # Starts with 'Add' URL button visble
@@ -61,6 +71,8 @@ class MainWindow(QMainWindow):
         self.ui.confirm_reset_warning.setText('')
         self.ui.item_logo.setPixmap(QPixmap('images/hank.png'))  # Sets default display image
         self.ui.selected_product_label.setText('')
+        self.ui.start_button.setEnabled(True)
+        self.ui.stop_button.setEnabled(False)
 
         # Prints 'Welcome Message' to GUI console
         self.ui.console_display.clear()
@@ -84,6 +96,10 @@ class MainWindow(QMainWindow):
             self.ui.cvv_set_indicator.setText(f'Current: {self.current_config["cvv_code"]}')
         else:
             self.ui.cvv_set_indicator.setText('Not Set')
+        if self.current_config['auto_complete']:
+            self.ui.auto_complete_button.setText('Enabled')
+        else:
+            self.ui.auto_complete_button.setText('Disabled')
 
 
     def print_to_console_display(self, message, timestamp=True):
@@ -179,6 +195,7 @@ class MainWindow(QMainWindow):
             self.current_config['timezone'] = f"{selected_timezone}"
         else:
             self.current_config['timezone'] = str(get_localzone())
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_data_path(self):
@@ -186,32 +203,38 @@ class MainWindow(QMainWindow):
         self.ui.chrome_data_path_display.setText(usr_data_path_input)
         self.current_config['selenium_options']['user-data-dir'] = usr_data_path_input
         self.ui.chrome_data_path_field.clear()
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_refresh_time(self):
         selected_refresh_time = self.ui.refresh_time_field.currentText()
         selected_refresh_time = parse_refresh_time(selected_refresh_time)
         self.current_config['refresh_time'] = selected_refresh_time
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_max_quantity(self):
         selected_max_quantity = self.ui.max_quantity_field.currentText()
         self.current_config['max_quantity'] = selected_max_quantity
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_chrome_profile(self):
         selected_chrome_profile = self.ui.chrome_profile_field.currentText()
         self.current_config['selenium_options']['profile-directory'] = selected_chrome_profile
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_headless_mode(self):
         headless_state = self.ui.headless_checkbox.isChecked()
         self.current_config['selenium_options']['headless'] = headless_state
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_detach_mode(self):
         detach_state = self.ui.detach_checkbox.isChecked()
         self.current_config['selenium_options']['detach'] = detach_state
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_cvv(self):
@@ -222,11 +245,17 @@ class MainWindow(QMainWindow):
         else:
             self.ui.cvv_set_indicator.setText('Not Set')
         self.ui.cvv_field.clear()
+        self.ui.confirm_reset_warning.setText('')
 
 
     def update_autocomplete(self):
         auto_complete_state = self.ui.auto_complete_button.isChecked()
+        if auto_complete_state:
+            self.ui.auto_complete_button.setText('Enabled')
+        else:
+            self.ui.auto_complete_button.setText('Disabled')
         self.current_config['auto_complete'] = auto_complete_state
+        self.ui.confirm_reset_warning.setText('')
 
 
     def reset_config(self):
@@ -249,6 +278,7 @@ class MainWindow(QMainWindow):
         self.ready_to_run = False
         write_config(self.current_config)
         self.print_to_console_display("Configuration settings saved")
+        self.ui.confirm_reset_warning.setText('Settings Saved')
 
 
     def external_log(self, message):
@@ -325,8 +355,52 @@ class MainWindow(QMainWindow):
             'selenium_options': self.current_config['selenium_options']
         }
         self.print_to_console_display("Starting program")
-        thread = threading.Thread(target=web.main, args=(program_data, self.comm))
-        thread.start()
+        self.comm.running = True
+        self.thread = threading.Thread(target=web.main, args=(program_data, self.comm))
+        self.thread.start()
+        self.ui.start_button.setEnabled(False)
+        self.ui.stop_button.setEnabled(True)
+
+
+    def stop_program(self):
+        if self.thread is not None:
+            self.print_to_console_display('Stopping Program')
+            self.comm.running = False
+
+            if self.comm.driver is not None:
+                self.comm.driver.quit()
+                self.comm.driver = None
+                self.print_to_console_display('Selenium Driver Closed')
+
+            self.thread = None
+            self.ui.start_button.setEnabled(True)
+            self.ui.stop_button.setEnabled(False)
+
+
+    def stop_button_functions(self):
+        if self.is_timeout_error:
+            self.clear_timeout_error()
+        else:
+            self.stop_program()
+
+
+    def activate_timeout_error(self, data):
+        self.is_timeout_error = data
+        self.clear_timeout_error()
+
+
+    def clear_timeout_error(self):
+        while self.is_timeout_error:
+            manual_bypass = input("Enter any text in console, or click STOP to proceed: ")
+            if manual_bypass:
+                break
+            else:
+                continue
+        self.is_timeout_error = False
+        self.print_to_console_display("Timeout Error cleared")
+
+
+
 
 
 def main():
